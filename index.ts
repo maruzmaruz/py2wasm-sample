@@ -5,7 +5,7 @@ import * as XLSX from 'xlsx';
 import { Buffer } from 'buffer'
 
 
-var newfileBytes;
+var outputData;
 
 async function initialize() {
     await init();
@@ -18,67 +18,64 @@ async function fetchAsync (request: FetchRequest): Promise<string> {
         if (!response.ok) {
           throw new Error(`HTTP error! Status: ${response.status}`)
         }
-  
         return await response.blob()
       })
       .then(async (response) => {
         return await response.text()
       })
-  }
-
-async function writeFileToDirectory (fetchURL: string, filePath: string): Promise<Directory> {
-    const result = await fetchAsync({
-        url: fetchURL,
-        options: {}
-    })
-    console.log("fetch " + result);
-
-    const dir = new Directory();
-    await dir.writeFile(filePath, result);
-    return dir;
 }
 
+
 async function runModule(module: WebAssembly.Module) {
-    // const dir = new Directory();
-    // await dir.writeFile("/file.txt", "Hello, World!");
-    const dir = await writeFileToDirectory("./static/sample.bin", "sample.bin");
+    // 入力ファイルの準備 1 ファイルをfetchで取得
+    const fetchresult = await fetchAsync({
+        url: "./static/input.txt",
+        options: {}
+    })
 
-    const option: RunOptions = {args: ["/mount/sample.bin"], mount: {"/mount": dir}};
+    // 入力ファイルの準備 2 wasmer DirectoryにWrite
+    const dir = new Directory();
+    await dir.writeFile("input.txt", fetchresult);
+
+    // wasm実行オプション
+    const option: RunOptions = {args: ["arg input"], mount: {"/static": dir}};
+
+    // wasm実行
     const instance = await runWasix(module, option);
-    // const stdout = instance.stdout.getReader();
     
+    // 実行中のwasmへの標準入力からの入力
     const encoder = new TextEncoder();
-    
-    // const stdin = instance.stdin.getWriter();
-    // await stdin.write(encoder.encode("100\n"));
-    // await stdin.close();
+    const stdin = instance.stdin.getWriter();
+    await stdin.write(encoder.encode("stdin input\n"));
+    await stdin.close();
 
+    // 実行完了までwait
     const result = await instance.wait();
     if (result.stderrBytes) {
         console.log(new TextDecoder().decode(new Uint8Array(result.stderrBytes)));
     }
+
+    // 実行結果取得 1 標準出力
     const message = new TextDecoder().decode(new Uint8Array(result.stdoutBytes));
-    const bytes = await dir.readFile("/newfile.json");
+    console.log(message);
+
+    // 実行結果取得 2 ファイル出力
+    const bytes = await dir.readFile("/output.json");
     console.log(new TextDecoder().decode((bytes)))
-    newfileBytes = bytes;
+    outputData = bytes;
 
     return result.ok ? message : null;;
 }
 
 async function main() {
-    console.log("index.ts main")
     const module = await initialize();
     const message = await runModule(module);
-    if (message) {
-        console.log(message)
-    }
-
 }
 
 const  downloadButton = document.getElementById("download")!
 downloadButton.onclick = function() {
-    if (newfileBytes !== null) {
-        const jsonString = Buffer.from(newfileBytes).toString('utf8')
+    if (outputData !== null) {
+        const jsonString = Buffer.from(outputData).toString('utf8')
         const parsedData = JSON.parse(jsonString)
 
         let exportBook = XLSX.utils.book_new()
